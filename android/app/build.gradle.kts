@@ -57,10 +57,10 @@ android {
     signingConfigs {
         create("stable") {
             if (hasStableSigning) {
-                storeFile = extractorKeystoreFile
-                storePassword = extractorKeystorePassword
-                keyAlias = extractorKeyAlias
-                keyPassword = extractorKeyPassword
+                storeFile = requireNotNull(extractorKeystoreFile)
+                storePassword = requireNotNull(extractorKeystorePassword)
+                keyAlias = requireNotNull(extractorKeyAlias)
+                keyPassword = requireNotNull(extractorKeyPassword)
             }
         }
     }
