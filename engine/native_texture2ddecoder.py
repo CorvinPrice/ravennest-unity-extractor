@@ -165,6 +165,15 @@ class NativeTexture2DDecoder(ModuleType):
     def decode_bc3(self, data, width, height):
         return self._decode("raven_decode_bc3", data, width, height)
 
+    def decode_dxt1(self, data, width, height):
+        return self.decode_bc1(data, width, height)
+
+    def decode_dxt5(self, data, width, height):
+        return self.decode_bc3(data, width, height)
+
+    def decode_bc2(self, data, width, height):
+        return self.decode_bc3(data, width, height)
+
     def decode_bc4(self, data, width, height):
         return self._decode("raven_decode_bc4", data, width, height)
 

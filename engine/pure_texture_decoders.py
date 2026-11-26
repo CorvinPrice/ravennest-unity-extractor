@@ -413,6 +413,9 @@ def _native_only(name: str):
 
 decode_bc1 = _native_only("decode_bc1")
 decode_bc3 = _native_only("decode_bc3")
+decode_dxt1 = decode_bc1
+decode_dxt5 = decode_bc3
+decode_bc2 = decode_bc3
 decode_bc4 = _native_only("decode_bc4")
 decode_bc5 = _native_only("decode_bc5")
 decode_bc6 = _native_only("decode_bc6")
@@ -429,6 +432,9 @@ def as_module() -> ModuleType:
     for name in (
         "decode_bc1",
         "decode_bc3",
+        "decode_dxt1",
+        "decode_dxt5",
+        "decode_bc2",
         "decode_bc4",
         "decode_bc5",
         "decode_bc6",

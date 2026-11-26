@@ -36,6 +36,16 @@ class FakeEnv:
         self.objects = objects
 
 
+class ParseOnlyObj:
+    type = FakeType("Texture2D")
+    path_id = 9
+
+    def parse_as_object(self):
+        data = FakeData("", FakeImage())
+        data.m_Name = "Parsed Name"
+        return data
+
+
 class UnityExtractTests(unittest.TestCase):
     def test_list_filters_supported_types(self):
         env = FakeEnv([
@@ -60,6 +70,10 @@ class UnityExtractTests(unittest.TestCase):
             self.assertEqual(skipped[0]["name"], "NoImage")
             for path in exported:
                 self.assertTrue(path.exists())
+
+    def test_parse_as_object_and_m_name_fallbacks(self):
+        rows = unity_extract.list_assets(FakeEnv([ParseOnlyObj()]))
+        self.assertEqual(rows[0]["name"], "Parsed_Name")
 
     def test_collect_inputs_finds_unity_files_in_data_folder(self):
         with tempfile.TemporaryDirectory() as tmp:

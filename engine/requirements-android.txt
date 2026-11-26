@@ -1,7 +1,5 @@
-UnityPy==1.25.4
+UnityPy==1.7.43
 Pillow
 lz4
 brotli
-fsspec
-attrs
-tpk_ar
+tabulate

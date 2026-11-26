@@ -61,8 +61,6 @@ def export_assets_json(path: str, outdir: str) -> str:
 
 def health_json() -> str:
     try:
-        import UnityPy  # noqa: F401
-
         decoder_source = "not installed"
         try:
             from unitypy_patch import install_unitypy_texture_patch
@@ -70,6 +68,8 @@ def health_json() -> str:
             decoder_source = install_unitypy_texture_patch()
         except Exception as exc:
             decoder_source = f"patch failed: {exc}"
+        import UnityPy  # noqa: F401
+
         return json.dumps(
             {"ok": True, "unitypy": True, "decoder_source": decoder_source},
             ensure_ascii=False,

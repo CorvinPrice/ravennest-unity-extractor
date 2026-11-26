@@ -60,7 +60,7 @@ Bloqueos para exportación completa:
 
 1. Crear el proyecto Gradle/Chaquopy en un entorno donde Gradle sí resuelva Google Maven y Maven Central.
 2. Usar Python 3.12, `minSdk 24`, ABIs `arm64-v8a` y `x86_64`.
-3. Instalar UnityPy con `--no-deps` o vendorizar su fuente Python sin `UnityPyBoost`; añadir solo `Pillow`, `lz4`, `brotli`, `fsspec`, `attrs` y `tpk_ar`.
+3. Instalar UnityPy 1.7.43 con `--no-deps` para Android; añadir solo `Pillow`, `lz4`, `brotli` y `tabulate`, reemplazando `texture2ddecoder`/`etcpak` por el decodificador Raven/stubs.
 4. Parchear los imports superiores de `astc_encoder` y `texture2ddecoder` para que sean perezosos; así el listado y las texturas no comprimidas no caen por decodificadores ausentes.
 5. Probar primero listado con un build Unity propio pequeño.
 6. Compilar wheels Android de `texture2ddecoder` y `astc-encoder-py` con recetas Chaquopy/NDK; recién entonces prometer exportación PNG de texturas comprimidas.
@@ -94,6 +94,14 @@ La ruta recomendada cambió de wheels Python a una librería nativa C ABI:
 - Verificación local: 9 tests Python OK con UnityPy en venv, incluido el test sintético de formatos comprimidos; `MainActivity.kt` compila contra `android-34` usando stubs Chaquopy.
 - Bloqueo APK: Gradle 8.7 y 8.14.3 fallan en este sandbox antes de resolver plugins: `Could not receive a message from the daemon`, causado por `Unexpected type tag 109` al leer la conexión loopback cliente-daemon. Replicar Chaquopy a mano exigiría reproducir la generación de assets del plugin (`build.json`, `bootstrap/stdlib/app/requirements .imy`, librerías nativas renombradas) sin validación en dispositivo; no se produjo un APK manual no verificado.
 - Hardware pendiente: construir en entorno Gradle funcional/CI, instalar en la tablet, elegir un build Unity propio pequeño, listar assets, exportar PNG y revisar Logcat si Chaquopy/UnityPy falla al cargar dependencias.
+
+## Actualización 2026-11-26: pin Android compatible con Chaquopy
+
+- CI falló en `installDebugPythonRequirements`: Chaquopy no encontró `UnityPy==1.25.4` para Android y listó candidatos hasta `1.7.43`.
+- La corrección local fija Android en `UnityPy==1.7.43`, cuyo wheel es `py3-none-any`; la API principal que usa el motor (`UnityPy.load`, `env.objects`, `obj.type.name`, `obj.read()`, `data.image`) está presente en esa versión.
+- Dependencias Android recortadas a `Pillow`, `lz4`, `brotli` y `tabulate`; `texture2ddecoder` y `etcpak` quedan reemplazados por el decodificador Raven/stubs, y se retiraron `fsspec`, `attrs` y `tpk_ar` por ser dependencias de UnityPy moderno.
+- `unitypy_patch.py` ahora instala el parche antes de importar UnityPy, añade stub de `etcpak`, aliases `decode_dxt1`/`decode_dxt5` y tolera conversores sin `calculate_astc_compressed_size` o con `CONV_TABLE` de forma distinta.
+- Pendiente tras levantar el límite de GitHub: empujar estos cambios, rerun de Actions y prueba en tablet con un build Unity propio pequeño.
 
 ## Actualización 2026-11-26: daemon corregido, red Java bloqueada en sandbox
 

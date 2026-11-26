@@ -42,7 +42,7 @@ python3 engine/unity_extract.py export /ruta/a/TuJuego_Data ./salida-png
 ## Bloqueos / siguiente paso
 
 - El bloqueo de decodificadores nativos quedó resuelto a nivel de librería: `libraven_texture2ddecoder.so` compila para `arm64-v8a` y `x86_64`, y UnityPy exporta DXT/BC7/ETC2/ASTC/PVRTC en la simulación sin wheels de escritorio.
-- Chaquopy queda configurado en `android/app/build.gradle.kts` con UnityPy `--no-deps` y dependencias recortadas; el decodificador entra como `.so` en `jniLibs`, no como wheel Python.
+- Chaquopy queda configurado en `android/app/build.gradle.kts` con UnityPy 1.7.43 `--no-deps` y dependencias recortadas (`Pillow`, `lz4`, `brotli`, `tabulate`); el decodificador entra como `.so` en `jniLibs`, no como wheel Python. UnityPy 1.25.4 no sirve para Chaquopy porque no ofrece una distribución instalable para Android en ese índice; 1.7.43 sí publica wheel `py3-none-any` y mantiene la API que usa el motor (`UnityPy.load`, `env.objects`, `obj.type.name`, `obj.read()`, `data.image`).
 - La URI Android ya está conectada: `MainActivity.kt` usa SAF para carpeta/archivo y carpeta de salida, copia la selección a caché privada preservando `level*`, `*.assets`, `.resS`, bundles y `StreamingAssets`, y llama `engine/android_bridge.py` por Chaquopy para listar/exportar JSON.
 - El icono Android sale de `assets/logo.png` (`res/drawable-nodpi/ic_launcher.png`).
 - En este sandbox Gradle todavía no construyó el APK Chaquopy: Gradle 8.7 y 8.14.3 fallan antes de resolver plugins con `Could not receive a message from the daemon` / `Unexpected type tag 109` en la conexión cliente-daemon por loopback. No hay APK final validado.

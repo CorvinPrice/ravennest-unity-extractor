@@ -37,6 +37,9 @@ def read_obj(obj: Any) -> Any:
     read = getattr(obj, "read", None)
     if callable(read):
         return read()
+    parse_as_object = getattr(obj, "parse_as_object", None)
+    if callable(parse_as_object):
+        return parse_as_object()
     return obj
 
 
@@ -54,9 +57,10 @@ def asset_name(obj: Any, data: Any = None) -> str:
         except Exception:
             data = None
     for source in (data, obj):
-        name = getattr(source, "name", None)
-        if isinstance(name, str) and name.strip():
-            return sanitize_name(name)
+        for attr in ("name", "m_Name"):
+            name = getattr(source, attr, None)
+            if isinstance(name, str) and name.strip():
+                return sanitize_name(name)
     path_id = getattr(obj, "path_id", "unknown")
     return sanitize_name(f"asset_{path_id}")
 
@@ -148,11 +152,6 @@ def load_env(path: Path) -> Any:
         raise RuntimeError(f"No Unity serialized files or bundles found under: {path}")
 
     try:
-        import UnityPy  # type: ignore
-    except ImportError as exc:
-        raise RuntimeError("UnityPy is not installed. Install engine/requirements.txt first.") from exc
-
-    try:
         from unitypy_patch import install_unitypy_texture_patch
 
         install_unitypy_texture_patch()
@@ -160,6 +159,11 @@ def load_env(path: Path) -> Any:
         # Listing should still work if the texture converter patch cannot load;
         # export will surface the concrete decoder error per asset.
         pass
+
+    try:
+        import UnityPy  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError("UnityPy is not installed. Install engine/requirements.txt first.") from exc
 
     return UnityPy.load(*[str(p) for p in inputs])
 

@@ -1,5 +1,7 @@
 import os
 import random
+import sys
+import types
 import unittest
 
 
@@ -41,6 +43,58 @@ class PureDecoderTests(unittest.TestCase):
         native = _native_or_skip(self)
         with self.assertRaises(RuntimeError):
             native.unpack_unity_crunch(b"not a crunch stream")
+
+
+class UnityPyPatchCompatibilityTests(unittest.TestCase):
+    def test_patch_handles_old_converter_shape_and_decoder_aliases(self):
+        import unitypy_patch
+
+        old_patched = unitypy_patch._PATCHED
+        old_source = unitypy_patch._DECODER_SOURCE
+        old_modules = {name: sys.modules.get(name) for name in ("UnityPy", "UnityPy.export", "UnityPy.export.Texture2DConverter", "texture2ddecoder", "etcpak")}
+        os.environ["RAVEN_TEXTURE2DDECODER"] = "pure"
+        try:
+            unitypy_patch._PATCHED = False
+            unitypy_patch._DECODER_SOURCE = "not installed"
+            unitypy = types.ModuleType("UnityPy")
+            export = types.ModuleType("UnityPy.export")
+            converter = types.ModuleType("UnityPy.export.Texture2DConverter")
+
+            class FakeFormat:
+                def __init__(self, name):
+                    self.name = name
+
+            astc_format = FakeFormat("ASTC_RGBA_4x4")
+            dxt_format = FakeFormat("DXT1")
+            converter.CONV_TABLE = {
+                astc_format: (lambda *args: None, ((4, 4),)),
+                dxt_format: lambda *args: None,
+            }
+            unitypy.export = export
+            export.Texture2DConverter = converter
+            sys.modules["UnityPy"] = unitypy
+            sys.modules["UnityPy.export"] = export
+            sys.modules["UnityPy.export.Texture2DConverter"] = converter
+            sys.modules.pop("texture2ddecoder", None)
+            sys.modules.pop("etcpak", None)
+
+            source = unitypy_patch.install_unitypy_texture_patch()
+
+            self.assertEqual(source, "raven pure ETC/EAC/ATC fallback")
+            self.assertIs(converter.texture2ddecoder, sys.modules["texture2ddecoder"])
+            self.assertTrue(hasattr(converter.texture2ddecoder, "decode_dxt1"))
+            self.assertTrue(hasattr(converter.texture2ddecoder, "decode_dxt5"))
+            self.assertEqual(converter.CONV_TABLE[astc_format][0], converter.astc)
+            self.assertEqual(converter.CONV_TABLE[astc_format][1], ((4, 4),))
+            self.assertIn("etcpak", sys.modules)
+        finally:
+            unitypy_patch._PATCHED = old_patched
+            unitypy_patch._DECODER_SOURCE = old_source
+            for name, module in old_modules.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
 
 
 class UnityPySyntheticTests(unittest.TestCase):

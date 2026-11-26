@@ -34,13 +34,11 @@ chaquopy {
 
         pip {
             options("--no-deps")
-            install("UnityPy==1.25.4")
+            install("UnityPy==1.7.43")
             install("Pillow")
             install("lz4")
             install("brotli")
-            install("fsspec")
-            install("attrs")
-            install("tpk_ar")
+            install("tabulate")
         }
     }
 
