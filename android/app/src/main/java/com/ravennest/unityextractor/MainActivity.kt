@@ -21,6 +21,8 @@ import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
     private lateinit var status: TextView
+    private lateinit var inputSelection: TextView
+    private lateinit var outputSelection: TextView
     private lateinit var results: TextView
     private var selectedInput: Uri? = null
     private var selectedInputIsTree = false
@@ -69,12 +71,28 @@ class MainActivity : Activity() {
             }
         })
 
+        inputSelection = TextView(this).apply {
+            text = "Entrada: sin seleccionar"
+            textSize = 14f
+            setTextColor(Color.rgb(190, 220, 255))
+            setPadding(0, 12, 0, 12)
+        }
+        root.addView(inputSelection)
+
         root.addView(Button(this).apply {
             text = "Elegir carpeta de salida PNG"
             setOnClickListener {
                 startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQ_OUTPUT_TREE)
             }
         })
+
+        outputSelection = TextView(this).apply {
+            text = "Salida: carpeta por defecto de la app"
+            textSize = 14f
+            setTextColor(Color.rgb(190, 255, 220))
+            setPadding(0, 12, 0, 12)
+        }
+        root.addView(outputSelection)
 
         root.addView(Button(this).apply {
             text = "Listar Texture2D / Sprite"
@@ -107,24 +125,32 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode != RESULT_OK) return
         val uri = data?.data ?: return
-        when (requestCode) {
-            REQ_INPUT_TREE -> {
-                takePersistable(uri, write = false)
-                selectedInput = uri
-                selectedInputIsTree = true
-                status.text = "Carpeta seleccionada: ${displayName(uri)}"
+        try {
+            when (requestCode) {
+                REQ_INPUT_TREE -> {
+                    selectedInput = uri
+                    selectedInputIsTree = true
+                    takePersistable(uri, write = false)
+                    inputSelection.text = "Entrada: ${displayName(uri, isTree = true)}"
+                    status.text = "Entrada lista. Elige salida o lista los assets."
+                }
+                REQ_INPUT_FILE -> {
+                    selectedInput = uri
+                    selectedInputIsTree = false
+                    takePersistable(uri, write = false)
+                    inputSelection.text = "Entrada: ${displayName(uri, isTree = false)}"
+                    status.text = "Entrada lista. Elige salida o lista los assets."
+                }
+                REQ_OUTPUT_TREE -> {
+                    selectedOutput = uri
+                    takePersistable(uri, write = true)
+                    outputSelection.text = "Salida: ${displayName(uri, isTree = true)}"
+                    status.text = "Salida lista. La entrada se mantiene."
+                }
             }
-            REQ_INPUT_FILE -> {
-                takePersistable(uri, write = false)
-                selectedInput = uri
-                selectedInputIsTree = false
-                status.text = "Archivo seleccionado: ${displayName(uri)}"
-            }
-            REQ_OUTPUT_TREE -> {
-                takePersistable(uri, write = true)
-                selectedOutput = uri
-                status.text = "Salida seleccionada: ${displayName(uri)}"
-            }
+        } catch (e: Exception) {
+            status.text = "Selección guardada, pero no se pudo leer el nombre."
+            results.text = e.message ?: e.toString()
         }
     }
 
@@ -133,7 +159,7 @@ class MainActivity : Activity() {
         if (write) flags = flags or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         try {
             contentResolver.takePersistableUriPermission(uri, flags)
-        } catch (_: SecurityException) {
+        } catch (_: Exception) {
             // Some providers do not offer persistable grants; the current grant still works.
         }
     }
@@ -244,7 +270,7 @@ class MainActivity : Activity() {
             val rootDocId = DocumentsContract.getTreeDocumentId(uri)
             copyTree(uri, rootDocId, root, "")
         } else {
-            copyDocument(uri, File(root, safeName(displayName(uri))))
+            copyDocument(uri, File(root, safeName(displayName(uri, isTree = false))))
         }
         return root
     }
@@ -308,14 +334,46 @@ class MainActivity : Activity() {
             lower.startsWith("globalgamemanagers.")
     }
 
-    private fun displayName(uri: Uri): String {
-        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if (index >= 0) return cursor.getString(index) ?: uri.toString()
+    private fun displayName(uri: Uri, isTree: Boolean): String {
+        return try {
+            val queryUri = if (isTree) {
+                val docId = DocumentsContract.getTreeDocumentId(uri)
+                DocumentsContract.buildDocumentUriUsingTree(uri, docId)
+            } else {
+                uri
             }
+            queryDisplayName(queryUri) ?: fallbackDisplayName(uri, isTree)
+        } catch (_: Exception) {
+            fallbackDisplayName(uri, isTree)
         }
-        return uri.lastPathSegment ?: uri.toString()
+    }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        return try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (index >= 0) cursor.getString(index)?.takeIf { it.isNotBlank() } else null
+                } else {
+                    null
+                }
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun fallbackDisplayName(uri: Uri, isTree: Boolean): String {
+        return try {
+            if (isTree) {
+                val docId = DocumentsContract.getTreeDocumentId(uri)
+                docId.substringAfter(':', docId).substringAfterLast('/').ifBlank { "carpeta" }
+            } else {
+                uri.lastPathSegment?.substringAfterLast('/')?.ifBlank { "archivo" } ?: "archivo"
+            }
+        } catch (_: Exception) {
+            if (isTree) "carpeta" else "archivo"
+        }
     }
 
     private fun safeName(name: String): String {
