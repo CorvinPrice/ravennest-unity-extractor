@@ -8,10 +8,12 @@ Texture2D and Sprite assets, and export them as PNG using UnityPy.
 from __future__ import annotations
 
 import argparse
+import gc
 import re
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Iterator, List, Dict, Tuple, Any
+from typing import Callable, Iterable, Iterator, List, Dict, Tuple, Any
 
 SUPPORTED_TYPES = {"Texture2D", "Sprite"}
 UNITY_FILE_PATTERNS = (
@@ -102,27 +104,108 @@ def unique_png_path(outdir: Path, base_name: str, used: set[str]) -> Path:
     return outdir / candidate
 
 
-def export_assets(env: Any, outdir: Path) -> Tuple[List[Path], List[Dict[str, Any]]]:
+@dataclass
+class ExportSummary:
+    total: int = 0
+    exported_count: int = 0
+    skipped_count: int = 0
+    exported_sample: List[str] = field(default_factory=list)
+    skipped: List[Dict[str, Any]] = field(default_factory=list)
+
+
+ProgressCallback = Callable[[Dict[str, Any]], None]
+
+
+def _close_image(image: Any) -> None:
+    close = getattr(image, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            pass
+
+
+def export_assets_with_summary(
+    env: Any,
+    outdir: Path,
+    progress_callback: ProgressCallback | None = None,
+    sample_limit: int = 200,
+    skipped_detail_limit: int = 200,
+) -> ExportSummary:
     outdir.mkdir(parents=True, exist_ok=True)
-    exported: List[Path] = []
-    skipped: List[Dict[str, Any]] = []
+    objects = list(iter_supported_objects(env))
+    summary = ExportSummary(total=len(objects))
     used: set[str] = set()
 
-    for obj in iter_supported_objects(env):
-        name = asset_name(obj)
+    def report(processed: int, phase: str, current: str = "") -> None:
+        if progress_callback is None:
+            return
         try:
+            progress_callback(
+                {
+                    "phase": phase,
+                    "processed": processed,
+                    "total": summary.total,
+                    "exported_count": summary.exported_count,
+                    "skipped_count": summary.skipped_count,
+                    "current": current,
+                }
+            )
+        except Exception:
+            # Progress reporting must never kill an export.
+            pass
+
+    report(0, "preparando")
+    for index, obj in enumerate(objects, start=1):
+        obj_type = type_name(obj)
+        name = sanitize_name(f"asset_{getattr(obj, 'path_id', index)}")
+        image = None
+        data = None
+        try:
+            report(index - 1, "decodificando", name)
             data = read_obj(obj)
+            name = asset_name(obj, data)
             image = get_image(data)
             if image is None:
-                skipped.append({"name": name, "type": type_name(obj), "reason": "no image"})
+                summary.skipped_count += 1
+                if len(summary.skipped) < skipped_detail_limit:
+                    summary.skipped.append({"name": name, "type": obj_type, "reason": "no image"})
                 continue
             target = unique_png_path(outdir, name, used)
+            report(index - 1, "guardando PNG", target.name)
             image.save(target)
-            exported.append(target)
-        except Exception as exc:  # keep MVP resilient per-asset
-            skipped.append({"name": name, "type": type_name(obj), "reason": str(exc)})
+            summary.exported_count += 1
+            if len(summary.exported_sample) < sample_limit:
+                summary.exported_sample.append(target.name)
+        except MemoryError as exc:
+            summary.skipped_count += 1
+            if len(summary.skipped) < skipped_detail_limit:
+                summary.skipped.append(
+                    {"name": name, "type": obj_type, "reason": f"MemoryError: {exc}"}
+                )
+            gc.collect()
+        except Exception as exc:  # keep export resilient per-asset
+            summary.skipped_count += 1
+            if len(summary.skipped) < skipped_detail_limit:
+                summary.skipped.append({"name": name, "type": obj_type, "reason": str(exc)})
+        finally:
+            _close_image(image)
+            image = None
+            data = None
+            if index % 25 == 0:
+                gc.collect()
+            report(index, "exportando", name)
 
-    return exported, skipped
+    report(summary.total, "terminado")
+    return summary
+
+
+def export_assets(env: Any, outdir: Path) -> Tuple[List[Path], List[Dict[str, Any]]]:
+    summary = export_assets_with_summary(env, outdir, sample_limit=100000, skipped_detail_limit=100000)
+    exported = [outdir / name for name in summary.exported_sample]
+    # Preserve the historical return shape for CLI/tests.  The Android bridge
+    # uses ExportSummary directly so it does not retain every exported path.
+    return exported, summary.skipped
 
 
 def is_unity_input_file(path: Path) -> bool:

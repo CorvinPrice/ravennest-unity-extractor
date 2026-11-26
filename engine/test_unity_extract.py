@@ -11,8 +11,17 @@ class FakeType:
 
 
 class FakeImage:
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.closed = False
+
     def save(self, path):
+        if self.fail:
+            raise RuntimeError("decode failed")
         Path(path).write_bytes(b"PNG")
+
+    def close(self):
+        self.closed = True
 
 
 class FakeData:
@@ -70,6 +79,29 @@ class UnityExtractTests(unittest.TestCase):
             self.assertEqual(skipped[0]["name"], "NoImage")
             for path in exported:
                 self.assertTrue(path.exists())
+
+    def test_export_summary_reports_progress_and_continues_after_failure(self):
+        good = FakeImage()
+        bad = FakeImage(fail=True)
+        env = FakeEnv([
+            FakeObj("Texture2D", 1, FakeData("Good", good)),
+            FakeObj("Texture2D", 2, FakeData("Bad", bad)),
+            FakeObj("Sprite", 3, FakeData("AlsoGood", FakeImage())),
+        ])
+        progress = []
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = unity_extract.export_assets_with_summary(
+                env, Path(tmp), progress_callback=progress.append
+            )
+            self.assertEqual(summary.total, 3)
+            self.assertEqual(summary.exported_count, 2)
+            self.assertEqual(summary.skipped_count, 1)
+            self.assertEqual(summary.exported_sample, ["Good.png", "AlsoGood.png"])
+            self.assertEqual(summary.skipped[0]["name"], "Bad")
+            self.assertTrue(good.closed)
+            self.assertTrue(bad.closed)
+            self.assertEqual(progress[-1]["phase"], "terminado")
+            self.assertEqual(progress[-1]["processed"], 3)
 
     def test_parse_as_object_and_m_name_fallbacks(self):
         rows = unity_extract.list_assets(FakeEnv([ParseOnlyObj()]))
