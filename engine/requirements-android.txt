@@ -1,0 +1,7 @@
+UnityPy==1.25.4
+Pillow
+lz4
+brotli
+fsspec
+attrs
+tpk_ar

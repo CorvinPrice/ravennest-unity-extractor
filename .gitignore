@@ -1,0 +1,12 @@
+# Build outputs and generated binaries are produced in CI.
+**/.gradle/
+**/build/
+**/__pycache__/
+*.pyc
+*.so
+*.apk
+*.aab
+android/app/src/main/jniLibs/
+android/app/src/main/res/drawable-nodpi/ic_launcher.png
+assets/logo.png
+native/build/
