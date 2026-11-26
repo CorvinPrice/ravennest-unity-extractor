@@ -46,6 +46,25 @@ class PureDecoderTests(unittest.TestCase):
 
 
 class UnityPyPatchCompatibilityTests(unittest.TestCase):
+    def test_tkinter_stub_satisfies_unitypy_1743_gameobject_import(self):
+        import unitypy_patch
+
+        old_modules = {name: sys.modules.get(name) for name in ("tkinter", "tkinter.messagebox")}
+        try:
+            sys.modules["tkinter"] = None
+            sys.modules.pop("tkinter.messagebox", None)
+
+            self.assertTrue(unitypy_patch._install_tkinter_stub())
+            from tkinter.messagebox import NO
+
+            self.assertEqual(NO, "no")
+        finally:
+            for name, module in old_modules.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
+
     def test_patch_handles_old_converter_shape_and_decoder_aliases(self):
         import unitypy_patch
 
@@ -87,6 +106,7 @@ class UnityPyPatchCompatibilityTests(unittest.TestCase):
             self.assertEqual(converter.CONV_TABLE[astc_format][0], converter.astc)
             self.assertEqual(converter.CONV_TABLE[astc_format][1], ((4, 4),))
             self.assertIn("etcpak", sys.modules)
+            self.assertTrue(hasattr(sys.modules["etcpak"], "compress_to_dxt1"))
         finally:
             unitypy_patch._PATCHED = old_patched
             unitypy_patch._DECODER_SOURCE = old_source

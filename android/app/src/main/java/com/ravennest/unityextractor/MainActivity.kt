@@ -5,6 +5,9 @@ import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.widget.Button
@@ -28,6 +31,21 @@ class MainActivity : Activity() {
     private var selectedInputIsTree = false
     private var selectedOutput: Uri? = null
     private val executor = Executors.newSingleThreadExecutor()
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private var progressRunning = false
+    private var progressStartedAtMs = 0L
+    private var progressBase = ""
+    private var progressDetail = ""
+    private var progressProcessed = 0
+    private var progressTotal = 0
+    private var progressCopiedFiles = 0
+    private val progressTicker = object : Runnable {
+        override fun run() {
+            if (!progressRunning) return
+            updateProgressStatus()
+            uiHandler.postDelayed(this, 1000)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -116,6 +134,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        stopProgress()
         executor.shutdownNow()
         super.onDestroy()
     }
@@ -172,12 +191,13 @@ class MainActivity : Activity() {
         }
         val inputIsTree = selectedInputIsTree
         val output = selectedOutput
-        status.text = if (export) "Exportando PNG..." else "Listando assets..."
+        startProgress(if (export) "Exportando PNG" else "Listando assets")
         results.text = ""
 
         executor.execute {
             try {
                 val copied = copySelectionToCache(input, inputIsTree)
+                setProgressDetail("procesando", processed = 0, total = 0, copiedFiles = progressCopiedFiles)
                 val bridge = EngineBridge.python(this)
                 if (!export) {
                     val payload = JSONObject(bridge.callAttr("list_assets_json", copied.absolutePath).toString())
@@ -191,6 +211,7 @@ class MainActivity : Activity() {
                 }
             } catch (e: Exception) {
                 runOnUiThread {
+                    stopProgress()
                     status.text = "Error"
                     results.text = e.message ?: e.toString()
                 }
@@ -198,8 +219,46 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun startProgress(base: String) {
+        progressRunning = true
+        progressStartedAtMs = SystemClock.elapsedRealtime()
+        progressBase = base
+        progressDetail = "preparando"
+        progressProcessed = 0
+        progressTotal = 0
+        progressCopiedFiles = 0
+        uiHandler.removeCallbacks(progressTicker)
+        updateProgressStatus()
+        uiHandler.postDelayed(progressTicker, 1000)
+    }
+
+    private fun stopProgress() {
+        progressRunning = false
+        uiHandler.removeCallbacks(progressTicker)
+    }
+
+    private fun setProgressDetail(detail: String, processed: Int, total: Int, copiedFiles: Int) {
+        progressDetail = detail
+        progressProcessed = processed
+        progressTotal = total
+        progressCopiedFiles = copiedFiles
+        runOnUiThread { updateProgressStatus() }
+    }
+
+    private fun updateProgressStatus() {
+        if (!progressRunning || isFinishing || isDestroyed) return
+        val elapsedSeconds = ((SystemClock.elapsedRealtime() - progressStartedAtMs) / 1000).coerceAtLeast(0)
+        val detailText = when {
+            progressTotal > 0 -> "$progressDetail $progressProcessed/$progressTotal archivos"
+            progressCopiedFiles > 0 -> "$progressDetail $progressCopiedFiles archivos"
+            else -> progressDetail
+        }
+        status.text = "$progressBase · $detailText · ${elapsedSeconds}s"
+    }
+
     private fun showListResult(payload: JSONObject, copied: File) {
         runOnUiThread {
+            stopProgress()
             if (!payload.optBoolean("ok")) {
                 status.text = "No se pudo listar"
                 results.text = payload.optString("error", "Error desconocido")
@@ -230,6 +289,7 @@ class MainActivity : Activity() {
     private fun showExportResult(payload: JSONObject, exportDir: File, outputTree: Uri?) {
         if (!payload.optBoolean("ok")) {
             runOnUiThread {
+                stopProgress()
                 status.text = "No se pudo exportar"
                 results.text = payload.optString("error", "Error desconocido")
             }
@@ -238,16 +298,21 @@ class MainActivity : Activity() {
         val pngs = exportDir.listFiles { file -> file.isFile && file.name.endsWith(".png", ignoreCase = true) }
             ?.sortedBy { it.name }
             ?: emptyList()
+        setProgressDetail("guardando PNG", processed = 0, total = pngs.size, copiedFiles = progressCopiedFiles)
         val destination = if (outputTree != null) {
             copyPngsToTree(pngs, outputTree)
             "carpeta de salida elegida"
         } else {
             val fallback = File(getExternalFilesDir(null), "RavenNestUnityExtractor/exports/${exportDir.name}")
             fallback.mkdirs()
-            pngs.forEach { it.copyTo(File(fallback, it.name), overwrite = true) }
+            pngs.forEachIndexed { index, png ->
+                png.copyTo(File(fallback, png.name), overwrite = true)
+                setProgressDetail("guardando PNG", processed = index + 1, total = pngs.size, copiedFiles = progressCopiedFiles)
+            }
             fallback.absolutePath
         }
         runOnUiThread {
+            stopProgress()
             status.text = "Exportados: ${payload.optInt("exported_count")}  ·  Omitidos: ${payload.optInt("skipped_count")}"
             val lines = StringBuilder()
             lines.append("PNG en: $destination\n\n")
@@ -264,18 +329,31 @@ class MainActivity : Activity() {
         }
     }
 
+    private data class CopyItem(val uri: Uri, val dest: File)
+
     private fun copySelectionToCache(uri: Uri, isTree: Boolean): File {
         val root = File(cacheDir, "input/session-${System.currentTimeMillis()}").apply { mkdirs() }
         if (isTree) {
             val rootDocId = DocumentsContract.getTreeDocumentId(uri)
-            copyTree(uri, rootDocId, root, "")
+            setProgressDetail("buscando", processed = 0, total = 0, copiedFiles = 0)
+            val items = mutableListOf<CopyItem>()
+            collectTree(uri, rootDocId, root, "", items)
+            progressCopiedFiles = items.size
+            setProgressDetail("copiando", processed = 0, total = items.size, copiedFiles = items.size)
+            items.forEachIndexed { index, item ->
+                copyDocument(item.uri, item.dest)
+                setProgressDetail("copiando", processed = index + 1, total = items.size, copiedFiles = items.size)
+            }
         } else {
+            setProgressDetail("copiando", processed = 0, total = 1, copiedFiles = 1)
             copyDocument(uri, File(root, safeName(displayName(uri, isTree = false))))
+            progressCopiedFiles = 1
+            setProgressDetail("copiando", processed = 1, total = 1, copiedFiles = 1)
         }
         return root
     }
 
-    private fun copyTree(treeUri: Uri, parentDocId: String, destDir: File, relPath: String) {
+    private fun collectTree(treeUri: Uri, parentDocId: String, destDir: File, relPath: String, items: MutableList<CopyItem>) {
         destDir.mkdirs()
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocId)
         val projection = arrayOf(
@@ -293,10 +371,11 @@ class MainActivity : Activity() {
                 val mime = cursor.getString(mimeIndex) ?: ""
                 val childRel = if (relPath.isBlank()) name else "$relPath/$name"
                 if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
-                    copyTree(treeUri, docId, File(destDir, safeName(name)), childRel)
+                    collectTree(treeUri, docId, File(destDir, safeName(name)), childRel, items)
                 } else if (shouldCopyUnityFile(name, childRel)) {
                     val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
-                    copyDocument(docUri, File(destDir, safeName(name)))
+                    items.add(CopyItem(docUri, File(destDir, safeName(name))))
+                    progressCopiedFiles = items.size
                 }
             }
         } ?: throw IOException("No se pudo leer la carpeta seleccionada")
@@ -311,11 +390,12 @@ class MainActivity : Activity() {
     private fun copyPngsToTree(pngs: List<File>, treeUri: Uri) {
         val parentDocId = DocumentsContract.getTreeDocumentId(treeUri)
         val parentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, parentDocId)
-        for (png in pngs) {
+        pngs.forEachIndexed { index, png ->
             val docUri = DocumentsContract.createDocument(contentResolver, parentUri, "image/png", png.name)
                 ?: throw IOException("No se pudo crear ${png.name} en la carpeta de salida")
             val out = contentResolver.openOutputStream(docUri) ?: throw IOException("No se pudo escribir ${png.name}")
             out.use { stream -> png.inputStream().use { it.copyTo(stream) } }
+            setProgressDetail("guardando PNG", processed = index + 1, total = pngs.size, copiedFiles = progressCopiedFiles)
         }
     }
 

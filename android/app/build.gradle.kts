@@ -42,6 +42,11 @@ chaquopy {
         buildPython("python3")
 
         pip {
+            // UnityPy 1.7.43 metadata also requires texture2ddecoder/etcpak,
+            // which have no Chaquopy wheels.  --no-deps intentionally omits
+            // them: unitypy_patch.py installs Raven's texture2ddecoder bridge,
+            // an etcpak stub, and a tkinter stub for UnityPy 1.7.43's stray
+            // desktop-only GameObject import.
             options("--no-deps")
             install("UnityPy==1.7.43")
             install("Pillow")

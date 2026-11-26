@@ -151,19 +151,26 @@ def load_env(path: Path) -> Any:
     if not inputs:
         raise RuntimeError(f"No Unity serialized files or bundles found under: {path}")
 
+    patch_detail = ""
     try:
         from unitypy_patch import install_unitypy_texture_patch
 
-        install_unitypy_texture_patch()
-    except Exception:
+        patch_source = install_unitypy_texture_patch()
+        if "unavailable" in patch_source:
+            patch_detail = f" Texture patch: {patch_source}."
+    except Exception as exc:
         # Listing should still work if the texture converter patch cannot load;
-        # export will surface the concrete decoder error per asset.
-        pass
+        # export will surface the concrete decoder error per asset.  Keep the
+        # patch failure text so an import failure below is not misreported as
+        # a missing UnityPy install.
+        patch_detail = f" Texture patch failed: {type(exc).__name__}: {exc}."
 
     try:
         import UnityPy  # type: ignore
-    except ImportError as exc:
-        raise RuntimeError("UnityPy is not installed. Install engine/requirements.txt first.") from exc
+    except Exception as exc:
+        raise RuntimeError(
+            f"UnityPy import failed: {type(exc).__name__}: {exc}.{patch_detail}"
+        ) from exc
 
     return UnityPy.load(*[str(p) for p in inputs])
 

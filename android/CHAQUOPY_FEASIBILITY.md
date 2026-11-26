@@ -100,7 +100,7 @@ La ruta recomendada cambió de wheels Python a una librería nativa C ABI:
 - CI falló en `installDebugPythonRequirements`: Chaquopy no encontró `UnityPy==1.25.4` para Android y listó candidatos hasta `1.7.43`.
 - La corrección local fija Android en `UnityPy==1.7.43`, cuyo wheel es `py3-none-any`; la API principal que usa el motor (`UnityPy.load`, `env.objects`, `obj.type.name`, `obj.read()`, `data.image`) está presente en esa versión.
 - Dependencias Android recortadas a `Pillow`, `lz4`, `brotli` y `tabulate`; `texture2ddecoder` y `etcpak` quedan reemplazados por el decodificador Raven/stubs, y se retiraron `fsspec`, `attrs` y `tpk_ar` por ser dependencias de UnityPy moderno.
-- `unitypy_patch.py` ahora instala el parche antes de importar UnityPy, añade stub de `etcpak`, aliases `decode_dxt1`/`decode_dxt5` y tolera conversores sin `calculate_astc_compressed_size` o con `CONV_TABLE` de forma distinta.
+- `unitypy_patch.py` ahora instala el parche antes de importar UnityPy, añade stub de `etcpak`, aliases `decode_dxt1`/`decode_dxt5` y tolera conversores sin `calculate_astc_compressed_size` o con `CONV_TABLE` de forma distinta. También instala un stub de `tkinter.messagebox`: UnityPy 1.7.43 importa `NO` desde ahí en `classes/GameObject.py`, y Chaquopy/Android no trae tkinter; sin ese stub, `import UnityPy` falla aunque el wheel esté instalado.
 - Pendiente tras levantar el límite de GitHub: empujar estos cambios, rerun de Actions y prueba en tablet con un build Unity propio pequeño.
 
 ## Actualización 2026-11-26: daemon corregido, red Java bloqueada en sandbox

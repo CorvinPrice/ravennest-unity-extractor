@@ -96,6 +96,12 @@ def _etcpak_stub() -> ModuleType:
         "compress_eacr_signed",
         "compress_eacrg",
         "compress_eacrg_signed",
+        # Names used by UnityPy 1.7.43's Texture2DConverter.image_to_texture2d.
+        "compress_to_dxt1",
+        "compress_to_dxt5",
+        "compress_to_etc1",
+        "compress_to_etc2_rgb",
+        "compress_to_etc2_rgba",
     ):
         setattr(module, name, _unavailable)
     return module
@@ -151,6 +157,54 @@ def _install_stub_if_missing(name: str, factory) -> bool:
         return True
 
 
+def _install_tkinter_stub() -> bool:
+    """Stub tkinter for UnityPy 1.7.43 on Android/Chaquopy.
+
+    UnityPy 1.7.43's ``UnityPy/classes/GameObject.py`` starts with
+    ``from tkinter.messagebox import NO`` even though the constant is unused.
+    Chaquopy has no tkinter, so that stray desktop import makes the whole
+    ``import UnityPy`` fail before any asset can be listed.  Install a tiny
+    package stub only when the real tkinter is unavailable.
+    """
+
+    if "tkinter.messagebox" in sys.modules and sys.modules["tkinter.messagebox"] is not None:
+        return False
+    try:
+        importlib.import_module("tkinter.messagebox")
+        return False
+    except Exception:
+        pass
+
+    tkinter = ModuleType("tkinter")
+    tkinter.__path__ = []  # mark as a package so submodule imports resolve
+    messagebox = ModuleType("tkinter.messagebox")
+    messagebox.NO = "no"
+    messagebox.YES = "yes"
+    messagebox.OK = "ok"
+    messagebox.CANCEL = "cancel"
+    messagebox.ABORT = "abort"
+    messagebox.RETRY = "retry"
+    messagebox.IGNORE = "ignore"
+
+    def _unavailable(*args, **kwargs):
+        raise RuntimeError("tkinter is not bundled on Android")
+
+    for name in (
+        "showinfo",
+        "showwarning",
+        "showerror",
+        "askquestion",
+        "askokcancel",
+        "askyesno",
+        "askretrycancel",
+    ):
+        setattr(messagebox, name, _unavailable)
+    tkinter.messagebox = messagebox
+    sys.modules["tkinter"] = tkinter
+    sys.modules["tkinter.messagebox"] = messagebox
+    return True
+
+
 def _astc_compressed_size(converter: Any, width: int, height: int, block_size: Any) -> int:
     helper = getattr(converter, "calculate_astc_compressed_size", None)
     if callable(helper):
@@ -182,6 +236,7 @@ def install_unitypy_texture_patch() -> str:
     if _PATCHED:
         return _DECODER_SOURCE
 
+    _install_tkinter_stub()
     decoder, source = _load_decoder()
     _install_decoder_aliases(decoder)
     if sys.modules.get("texture2ddecoder") is not decoder:
