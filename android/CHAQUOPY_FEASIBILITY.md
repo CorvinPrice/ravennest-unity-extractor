@@ -60,7 +60,7 @@ Bloqueos para exportación completa:
 
 1. Crear el proyecto Gradle/Chaquopy en un entorno donde Gradle sí resuelva Google Maven y Maven Central.
 2. Usar Python 3.12, `minSdk 24`, ABIs `arm64-v8a` y `x86_64`.
-3. Instalar UnityPy 1.7.43 con `--no-deps` para Android; añadir solo `Pillow`, `lz4`, `brotli` y `tabulate`, reemplazando `texture2ddecoder`/`etcpak` por el decodificador Raven/stubs.
+3. Instalar UnityPy 1.7.43 con `--no-deps` para Android; añadir `Pillow`, `chaquopy-libjpeg`, `chaquopy-freetype`, `lz4`, `brotli` y `tabulate`, reemplazando `texture2ddecoder`/`etcpak` por el decodificador Raven/stubs. Las dependencias nativas de Pillow deben listarse a mano porque `--no-deps` las omite.
 4. Parchear los imports superiores de `astc_encoder` y `texture2ddecoder` para que sean perezosos; así el listado y las texturas no comprimidas no caen por decodificadores ausentes.
 5. Probar primero listado con un build Unity propio pequeño.
 6. Compilar wheels Android de `texture2ddecoder` y `astc-encoder-py` con recetas Chaquopy/NDK; recién entonces prometer exportación PNG de texturas comprimidas.
@@ -99,7 +99,7 @@ La ruta recomendada cambió de wheels Python a una librería nativa C ABI:
 
 - CI falló en `installDebugPythonRequirements`: Chaquopy no encontró `UnityPy==1.25.4` para Android y listó candidatos hasta `1.7.43`.
 - La corrección local fija Android en `UnityPy==1.7.43`, cuyo wheel es `py3-none-any`; la API principal que usa el motor (`UnityPy.load`, `env.objects`, `obj.type.name`, `obj.read()`, `data.image`) está presente en esa versión.
-- Dependencias Android recortadas a `Pillow`, `lz4`, `brotli` y `tabulate`; `texture2ddecoder` y `etcpak` quedan reemplazados por el decodificador Raven/stubs, y se retiraron `fsspec`, `attrs` y `tpk_ar` por ser dependencias de UnityPy moderno.
+- Dependencias Android recortadas a `Pillow`, `chaquopy-libjpeg`, `chaquopy-freetype`, `lz4`, `brotli` y `tabulate`; `texture2ddecoder` y `etcpak` quedan reemplazados por el decodificador Raven/stubs, y se retiraron `fsspec`, `attrs` y `tpk_ar` por ser dependencias de UnityPy moderno.
 - `unitypy_patch.py` ahora instala el parche antes de importar UnityPy, añade stub de `etcpak`, aliases `decode_dxt1`/`decode_dxt5` y tolera conversores sin `calculate_astc_compressed_size` o con `CONV_TABLE` de forma distinta. También instala un stub de `tkinter.messagebox`: UnityPy 1.7.43 importa `NO` desde ahí en `classes/GameObject.py`, y Chaquopy/Android no trae tkinter; sin ese stub, `import UnityPy` falla aunque el wheel esté instalado.
 - Pendiente tras levantar el límite de GitHub: empujar estos cambios, rerun de Actions y prueba en tablet con un build Unity propio pequeño.
 
@@ -110,3 +110,16 @@ La ruta recomendada cambió de wheels Python a una librería nativa C ABI:
 - Comando probado: `GRADLE_USER_HOME=/tmp/gradle-unity-extractor-final3 ./build-apk.sh`. Resultado: `BUILD FAILED in 46s` en resolución de `com.android.tools.build:gradle:8.5.2`; no se generó APK.
 - Evidencia del bloqueo restante: curl/Python sí llegan por el proxy a Google Maven/Maven Central, pero un socket Java directo recibe el aviso del sandbox de que otras conexiones TCP están desactivadas; Gradle/Java recibe `Connection reset` al abrir TLS hacia los repositorios. Es un bloqueo de red del entorno local, no del proyecto.
 - Ruta reproducible añadida: `android/build-apk.sh` y `.github/workflows/build-apk.yml` (JDK 17, Python 3.12, Android SDK, Gradle 8.7) para construir y subir `app-debug.apk` en CI. En CI no se necesita el proxy del sandbox.
+
+## Actualización 2026-11-26: Pillow necesita sus librerías Chaquopy
+
+- En hardware, tras corregir el stub de tkinter, el listado llegó a copiar archivos y falló al importar UnityPy: `dlopen failed: library "libjpeg_chaquopy.so" not found: needed by .../PIL/_imaging.so`.
+- Causa: el bloque Chaquopy usa `--no-deps` para omitir `texture2ddecoder`/`etcpak`, pero eso también omite las dependencias nativas que el wheel Chaquopy de Pillow declara para sus módulos C. `PIL/_imaging.so` necesita `libjpeg_chaquopy.so`; el módulo de fuentes de Pillow usa FreeType.
+- Corrección de empaquetado: declarar explícitamente `chaquopy-libjpeg>=1.5.3` y `chaquopy-freetype>=2.9.1` junto a `Pillow` en `build.gradle.kts` y `engine/requirements-android.txt`. No hace falta cambiar el workflow: el mismo `installDebugPythonRequirements` de Chaquopy debe instalar ahora esas librerías para `arm64-v8a` y `x86_64`.
+
+## Actualización 2026-11-26: autoactualización y firma estable
+
+- La app sube a `versionCode 2` / `versionName 0.1.1` y añade botón **Buscar actualización** más comprobación al abrir. Lee `version-extractor.json` desde `main`, compara `versionCode`, descarga `apk_url` a caché y abre el instalador Android con `FileProvider`. Si el manifiesto o el asset de Release todavía no existen, la comprobación automática falla en silencio y la manual muestra el error sin cerrar la app.
+- `version-extractor.json` apunta a `https://github.com/CorvinPrice/ravennest-unity-extractor/releases/latest/download/app-debug.apk`. La autoactualización queda viva cuando exista una GitHub Release con un asset llamado exactamente `app-debug.apk` y el manifiesto anuncie un `versionCode` mayor que el instalado.
+- Para actualizar sin desinstalar no basta con subir `versionCode`: Android exige el mismo certificado de firma. `build.gradle.kts` ahora acepta una firma estable por variables de entorno (`EXTRACTOR_KEYSTORE_PATH`, `EXTRACTOR_KEYSTORE_PASSWORD`, `EXTRACTOR_KEY_ALIAS`, `EXTRACTOR_KEY_PASSWORD`) y la aplica a `debug`/`release` cuando están completas. Sin esas variables, CI sigue produciendo un APK debug firmado con certificado debug; con variables incompletas, Gradle falla en vez de caer silenciosamente a debug.
+- Pendiente manual en GitHub: crear una keystore dedicada fuera del repo, guardar `EXTRACTOR_KEYSTORE_BASE64`, `EXTRACTOR_KEYSTORE_PASSWORD`, `EXTRACTOR_KEY_ALIAS` y `EXTRACTOR_KEY_PASSWORD` como Secrets, editar el workflow para decodificar la keystore a un archivo temporal y exportar `EXTRACTOR_KEYSTORE_PATH` antes de compilar, y publicar el APK como asset `app-debug.apk` en una Release. Hasta completar eso, no se debe prometer actualización sin desinstalar; al pasar del APK debug actual a la línea firmada estable puede hacer falta una última desinstalación.

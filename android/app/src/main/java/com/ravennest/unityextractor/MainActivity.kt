@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -14,12 +15,15 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.core.content.FileProvider
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
@@ -122,6 +126,11 @@ class MainActivity : Activity() {
             setOnClickListener { runEngine(export = true) }
         })
 
+        root.addView(Button(this).apply {
+            text = "Buscar actualización"
+            setOnClickListener { checkForUpdates(manual = true) }
+        })
+
         results = TextView(this).apply {
             text = ""
             textSize = 14f
@@ -131,6 +140,7 @@ class MainActivity : Activity() {
         root.addView(ScrollView(this).apply { addView(results) })
 
         setContentView(root)
+        checkForUpdates(manual = false)
     }
 
     override fun onDestroy() {
@@ -180,6 +190,132 @@ class MainActivity : Activity() {
             contentResolver.takePersistableUriPermission(uri, flags)
         } catch (_: Exception) {
             // Some providers do not offer persistable grants; the current grant still works.
+        }
+    }
+
+    private fun checkForUpdates(manual: Boolean) {
+        Thread {
+            try {
+                val manifest = JSONObject(fetchText(UPDATE_MANIFEST_URL))
+                val remoteCode = manifest.optLong("versionCode", -1L)
+                val remoteName = manifest.optString("versionName", remoteCode.toString())
+                val apkUrl = manifest.optString("apk_url", manifest.optString("apkUrl", ""))
+                val currentCode = currentVersionCode()
+                if (remoteCode <= currentCode) {
+                    if (manual) {
+                        runOnUiThread {
+                            status.text = "Ya tienes la última versión ($currentCode)."
+                            results.text = "Versión instalada: $currentCode\nVersión publicada: $remoteName ($remoteCode)"
+                        }
+                    }
+                    return@Thread
+                }
+                if (apkUrl.isBlank()) {
+                    if (manual) {
+                        runOnUiThread {
+                            status.text = "Hay una versión nueva, pero falta la URL de descarga."
+                            results.text = "Versión publicada: $remoteName ($remoteCode)"
+                        }
+                    }
+                    return@Thread
+                }
+                runOnUiThread {
+                    status.text = "Actualización disponible: $remoteName ($remoteCode). Descargando..."
+                    results.text = ""
+                }
+                val apk = downloadUpdateApk(apkUrl, remoteCode)
+                runOnUiThread {
+                    status.text = "Actualización descargada. Abriendo instalador..."
+                    launchInstaller(apk)
+                }
+            } catch (e: Exception) {
+                if (manual) {
+                    runOnUiThread {
+                        status.text = "No se pudo buscar actualización todavía."
+                        results.text = e.message ?: e.toString()
+                    }
+                }
+            }
+        }.start()
+    }
+
+    private fun currentVersionCode(): Long {
+        val info = packageManager.getPackageInfo(packageName, 0)
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            @Suppress("DEPRECATION")
+            info.versionCode.toLong()
+        }
+    }
+
+    private fun fetchText(url: String): String {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 10000
+            readTimeout = 15000
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "RavenNestUnityExtractor")
+        }
+        try {
+            val code = connection.responseCode
+            if (code !in 200..299) throw IOException("HTTP $code al leer $url")
+            return connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun downloadUpdateApk(url: String, remoteCode: Long): File {
+        val dir = File(cacheDir, "updates").apply { mkdirs() }
+        val target = File(dir, "RavenNestUnityExtractor-$remoteCode.apk")
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 15000
+            readTimeout = 30000
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "RavenNestUnityExtractor")
+        }
+        try {
+            val code = connection.responseCode
+            if (code !in 200..299) throw IOException("HTTP $code al descargar la actualización")
+            val total = connection.contentLengthLong
+            var copied = 0L
+            var lastReportedPercent = -1
+            connection.inputStream.use { input ->
+                FileOutputStream(target).use { out ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read <= 0) break
+                        out.write(buffer, 0, read)
+                        copied += read
+                        if (total > 0) {
+                            val percent = ((copied * 100) / total).toInt()
+                            if (percent != lastReportedPercent) {
+                                lastReportedPercent = percent
+                                runOnUiThread { status.text = "Descargando actualización... $percent%" }
+                            }
+                        }
+                    }
+                }
+            }
+        } finally {
+            connection.disconnect()
+        }
+        if (!target.isFile || target.length() <= 0L) throw IOException("La descarga de actualización quedó vacía")
+        return target
+    }
+
+    private fun launchInstaller(apk: File) {
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", apk)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            status.text = "Actualización descargada, pero no se pudo abrir el instalador."
+            results.text = "APK: ${apk.absolutePath}\n${e.message ?: e.toString()}"
         }
     }
 
@@ -465,6 +601,8 @@ class MainActivity : Activity() {
         private const val REQ_INPUT_TREE = 1001
         private const val REQ_INPUT_FILE = 1002
         private const val REQ_OUTPUT_TREE = 1003
+        private const val UPDATE_MANIFEST_URL =
+            "https://raw.githubusercontent.com/CorvinPrice/ravennest-unity-extractor/main/version-extractor.json"
     }
 }
 

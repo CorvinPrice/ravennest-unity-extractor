@@ -2,8 +2,13 @@
 # its texture2ddecoder/etcpak requirements have no Chaquopy wheels and are
 # replaced at runtime by unitypy_patch.py (Raven decoder + stubs, including a
 # tkinter stub for UnityPy 1.7.43's desktop-only GameObject import).
+# --no-deps also omits Pillow's Chaquopy native-library dependencies, so
+# chaquopy-libjpeg/chaquopy-freetype are listed explicitly; without libjpeg,
+# PIL/_imaging.so fails to load on Android.
 UnityPy==1.7.43
 Pillow
+chaquopy-libjpeg>=1.5.3
+chaquopy-freetype>=2.9.1
 lz4
 brotli
 tabulate
